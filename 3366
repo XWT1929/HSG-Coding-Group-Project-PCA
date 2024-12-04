@@ -1,0 +1,133 @@
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# Step 1: Import and clean the data
+# I am importing the Treasury yield data from multiple CSV files and combining them
+# into a single dataframe. The goal is to align the data by dates and ensure its clean before analysis.
+
+# List of individual Treasury yield files for different maturities
+treasury_yield_files = ["DGS6MO.csv", "DGS1.csv", "DGS2.csv", "DGS5.csv", "DGS10.csv", "DGS30.csv"]
+
+# Dictionary to store data for each maturity
+yield_data_by_maturity = {}
+for yield_file in treasury_yield_files:
+    # Read the CSV file and parse the DATE column as a datetime index
+    yield_data = pd.read_csv(yield_file, parse_dates=['DATE'], index_col='DATE')
+    # Extract the maturity (e.g., "DGS1") from the filename
+    maturity_label = yield_file.split('.')[0]
+    # Rename the VALUE column to the maturity label (so each column has a unique name)
+    yield_data_by_maturity[maturity_label] = yield_data.rename(columns={'VALUE': maturity_label})
+
+# Combine all individual dataframes into one dataframe, aligned by DATE
+# I use inner join so only rows with data for all maturiteis are kept.
+combined_yield_data = pd.concat(yield_data_by_maturity.values(), axis=1, join='inner')
+
+# Make sure all data is numeric (in case there are any numbers are character entries)
+numeric_yield_data = combined_yield_data.apply(pd.to_numeric, errors='coerce')
+
+# Interpolate missing values (fills gaps in the data) and drop rows with remaining missing values
+cleaned_yield_data = numeric_yield_data.interpolate(method='linear').dropna()
+
+# Step 2: Define the PCA computation function
+# I wrote this function to handle the actual PCA analysis. It computes eigenvalues,
+# eigenvectors and explained variance for a given dataset.
+def compute_pca(data_matrix):
+    # Center the data (subtract the mean from each column)
+    centered_data = data_matrix - data_matrix.mean(axis=0)
+    # Compute the covariance matrix
+    covariance_matrix = np.cov(centered_data, rowvar=False)
+    # Perform eigen decomposition to get eigenvalues and eigenvectors
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance_matrix)
+    # Sort them in descending order of eigenvalues (most important first)
+    sorted_indices = np.argsort(eigenvalues)[::-1]
+    return eigenvalues[sorted_indices], eigenvectors[:, sorted_indices]
+
+# Step 3: Perform PCA and create graphs for specified time horizons
+# I am analyzing the data for the last 5, 10, and 30 years. For each time horizon,
+# I will compute the principal components, create bar charts for the eigenvectors,
+# and plot the evolution of the first three principal components over time.
+
+time_horizons_years = [5, 10, 30]  # The time horizons I want to analyze
+trading_days_per_year = 252  # Number of trading days in a year (approximation)
+
+# This dictionary maps the column names to more descriptive labels for the graphs
+label_mapping = {
+    "DGS6MO": "6-Month", "DGS1": "1-Year", "DGS2": "2-Year",
+    "DGS5": "5-Year", "DGS10": "10-Year", "DGS30": "30-Year"
+}
+
+# Create a figure for bar charts of eigenvector weights
+barcharts_fig = make_subplots(
+    rows=len(time_horizons_years), cols=3,  # One row per time horizon, three columns for PC1, PC2, and PC3
+    subplot_titles=[f"{years}-Year PC{j+1}" for years in time_horizons_years for j in range(3)],
+    horizontal_spacing=0.05, vertical_spacing=0.1
+)
+
+# Loop through each time horizon
+for i, horizon_years in enumerate(time_horizons_years):
+    # Calculate how many rows of data I need for this time horizon
+    rows_for_horizon = horizon_years * trading_days_per_year
+
+    # Check if there's enough data for this time horizon
+    if rows_for_horizon > len(cleaned_yield_data):
+        continue  # Skip this horizon if there's not enough data
+
+    # Subset the data for this time horizon
+    yield_subset = cleaned_yield_data.iloc[-rows_for_horizon:].values
+
+    # Center the data for this time horizon
+    centered_yield_subset = yield_subset - yield_subset.mean(axis=0)
+
+    # Perform PCA on the centered data
+    eigenvalues, eigenvectors = compute_pca(centered_yield_subset)
+    explained_ratios = eigenvalues / eigenvalues.sum()
+
+    # Add bar charts for the first 3 principal components
+    for j in range(3):  # Loop through the first 3 principal components
+        eigenvector = eigenvectors[:, j]  # Get the eigenvector for this component
+        barcharts_fig.add_trace(
+            go.Bar(
+                x=[label_mapping[col] for col in cleaned_yield_data.columns],  # Use descriptive labels
+                y=eigenvector,  # Plot the eigenvector weights
+                name=f"{horizon_years}-Year PC{j + 1}"
+            ),
+            row=i + 1, col=j + 1  # Place the chart in the right row and column
+        )
+
+    # Project the centered data onto the first 3 principal components
+    projections = {}
+    for j in range(3):  # Loop through the first 3 components
+        component_name = f'Principal Component {j + 1}'
+        projected_values = np.dot(centered_yield_subset, eigenvectors[:, j])
+        projections[component_name] = pd.Series(projected_values, index=cleaned_yield_data.iloc[-rows_for_horizon:].index)
+
+    # Create a figure to plot the projectinos over time
+    projections_fig = go.Figure()
+    for component_name, series in projections.items():
+        projections_fig.add_trace(
+            go.Scatter(
+                x=series.index,  # Dates
+                y=series,  # Projected values
+                mode='lines',
+                name=component_name
+            )
+        )
+    projections_fig.update_layout(
+        title=f"Principal Component Projections (Last {horizon_years} Years)",
+        xaxis_title="Date",
+        yaxis_title="Principal Component Value",
+        legend_title="Principal Components"
+    )
+    projections_fig.show()  # Show the time-series projections
+
+# Finalize and show the bar chart figure
+barcharts_fig.update_layout(
+    height=300 * len(time_horizons_years),  # Adjust the height dynamically
+    width=1200,
+    title_text="Principal Component Weights Across Horizons",
+    showlegend=False  # I am hiding the legend for cleaner output
+)
+
+barcharts_fig.show()
