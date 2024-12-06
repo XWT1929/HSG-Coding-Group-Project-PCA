@@ -3,6 +3,21 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+# Simple Code Documentation:
+# Code is written in Python. Make sure the csv files are in the SAME working directory / folder as the Python file. The code assuems that.
+# Further instructions are in the code itself. Required packages (in case not already installed) please see above. 
+
+# What I try to achieve
+# is a simple Principal Component Analysis (PCA). In financial economics, the first three principal components & eigenvectors (i.e.
+# corresponding to the highest eigenvalues) explain nearly all of the variation in the data, whilst the remainder are simply noise.
+# Assuming this, the code will import, clean, combine all the individual CSV files. Since some of them start earlier or later, the dates also need
+# to be aligned properly. Then, I will define a generic function which calculates all eigenvectors and eigenvalues for any subset in the data (i.e. any
+# time horizon).
+
+# Finally, I will use the first three eigenvectors to calculate the evolution of the first principal components over time. In this code, I 
+# look at the past 5, 10 and 30 years for the analysis. Note that this time horizon has nothing to do with the constant maturity of the bonds.
+# For example, the 30-year bond will stay a 30-year bond throughout the analysis. The data are retrieved from: fred.stlouisfed.org/series/DGS10
+
 # Step 1: Import and clean the data
 # I am importing the Treasury yield data from multiple CSV files and combining them
 # into a single dataframe. The goal is to align the data by dates and ensure its clean before analysis.
@@ -12,10 +27,11 @@ treasury_yield_files = ["DGS6MO.csv", "DGS1.csv", "DGS2.csv", "DGS5.csv", "DGS10
 
 # Dictionary to store data for each maturity
 yield_data_by_maturity = {}
+
 for yield_file in treasury_yield_files:
     # Read the CSV file and parse the DATE column as a datetime index
     yield_data = pd.read_csv(yield_file, parse_dates=['DATE'], index_col='DATE')
-    # Extract the maturity (e.g., "DGS1") from the filename
+    # Extract the constant maturity from the filename
     maturity_label = yield_file.split('.')[0]
     # Rename the VALUE column to the maturity label (so each column has a unique name)
     yield_data_by_maturity[maturity_label] = yield_data.rename(columns={'VALUE': maturity_label})
@@ -32,7 +48,8 @@ cleaned_yield_data = numeric_yield_data.interpolate(method='linear').dropna()
 
 # Step 2: Define the PCA computation function
 # I wrote this function to handle the actual PCA analysis. It computes eigenvalues,
-# eigenvectors and explained variance for a given dataset.
+# eigenvectors and explained variance for any given dataset/subset (for any time horizon)
+
 def compute_pca(data_matrix):
     # Center the data (subtract the mean from each column)
     centered_data = data_matrix - data_matrix.mean(axis=0)
@@ -48,11 +65,13 @@ def compute_pca(data_matrix):
 # I am analyzing the data for the last 5, 10, and 30 years. For each time horizon,
 # I will compute the principal components, create bar charts for the eigenvectors,
 # and plot the evolution of the first three principal components over time.
+# If you want to look at another time-frame simply change them in line 70.
 
-time_horizons_years = [5, 10, 30]  # The time horizons I want to analyze
+time_horizons_years = [5, 10, 30]  # The time horizons I want to analyze. you can change them here.
 trading_days_per_year = 252  # Number of trading days in a year (approximation)
 
-# This dictionary maps the column names to more descriptive labels for the graphs
+# This dictionary maps the column names to more descriptive labels for the graphs. This ensures
+# the output doesn't show something like "DGS6MO" but shows "6-Month" for the 6-month constant maturity bond
 label_mapping = {
     "DGS6MO": "6-Month", "DGS1": "1-Year", "DGS2": "2-Year",
     "DGS5": "5-Year", "DGS10": "10-Year", "DGS30": "30-Year"
@@ -72,9 +91,9 @@ for i, horizon_years in enumerate(time_horizons_years):
 
     # Check if there's enough data for this time horizon
     if rows_for_horizon > len(cleaned_yield_data):
-        continue  # Skip this horizon if there's not enough data
+        continue  # Skip this horizon if there's not enough data.
 
-    # Subset the data for this time horizon
+    # Subset the data for this time horizon being the last 5, 10 or 30 years
     yield_subset = cleaned_yield_data.iloc[-rows_for_horizon:].values
 
     # Center the data for this time horizon
